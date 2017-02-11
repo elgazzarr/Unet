@@ -9,7 +9,6 @@ from keras.layers import Input, merge, Convolution2D, MaxPooling2D, UpSampling2D
 from keras.optimizers import Adam, SGD
 from keras.callbacks import ModelCheckpoint, LearningRateScheduler, Callback
 from keras import backend as K
-from sklearn.metrics import accuracy_score, precision_score, recall_score, confusion_matrix, roc_auc_score
 import tensorflow as tf
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
@@ -20,8 +19,8 @@ import pandas
 
 def load_traindata():
     path = os.getcwd()
-    x = np.load(path + "/data/imgs_train_256_15_T1.npy")
-    y = np.load(path + "/data/gt_train_256_15.npy")
+    x = np.load(path + "/data/imgs_train_256_40_T1.npy")
+    y = np.load(path + "/data/gt_train_256_40.npy")
     print (x.shape)
     print (y.shape)
     #imgs_train = imgs_train.astype('float32')
@@ -39,29 +38,9 @@ def load_testdata():
     #imgs_mask_train = imgs_mask_train.astype('float32')
     return  x, y
 
-#Evaluations
-def evaluate(y_true, y_pred):
-    labels = K.flatten(y_true)
-    labels = tf.to_int64(labels)
-    labels = tf.one_hot(labels,2)
-    logits = tf.reshape(y_pred, (-1, 2))
-
-    acc = binary_accuracy(labels,logits)
-    pr = precision(labels,logits)
-    rec = recall(labels,logits)
-    fm = fmeasure(labels,logits)
 
 
-
-def acc1(y_true, y_pred):
-    labels = K.flatten(y_true)
-    labels = tf.to_int64(labels)
-    labels = tf.one_hot(labels,2)
-    logits = tf.reshape(y_pred, (-1, 2))
-
-    return binary_accuracy(labels,logits)
-
-
+#Evaluation metrics
 def prec1(y_true, y_pred):
     labels = K.flatten(y_true)
     labels = tf.to_int64(labels)
@@ -90,78 +69,7 @@ def fm1(y_true, y_pred):
 
     return fmeasure(labels,logits)
 
-
-def prec(y_true, y_pred):
-    labels = K.flatten(y_true)
-    #labels = tf.to_int64(labels)
-    logits = tf.reshape(y_pred, (-1, 2))
-    logits = tf.argmax(logits,1)
-    logits = tf.to_float(logits)
-
-    true_positives = np.sum(K.round(labels * logits))
-    print ("Shape:" , true_positives)
-    predicted_positives = np.sum(K.round(K.clip(logits, 0, 1)))
-    print ("Shape:" , predicted_positives)
-    precision = true_positives / (predicted_positives + K.epsilon())
-    print ("Shape:" , precision)
-    return precision
-
-
-def rec(y_true, y_pred):
-    labels = K.flatten(y_true)
-    #labels = tf.to_int64(labels)
-    logits = tf.reshape(y_pred, (-1, 2))
-    logits = tf.argmax(logits,1)
-    logits = tf.to_float(logits)
-
-    true_positives = np.sum(K.round(K.clip(labels * logits, 0, 1)))
-    possible_positives = np.sum(K.round(K.clip(labels, 0, 1)))
-
-    rec = true_positives / (possible_positives+K.epsilon())
-    return rec
-
-
-
-def fm(y_true, y_pred):
-    p = prec(y_true, y_pred)
-    r = rec(y_true, y_pred)
-    print(p)
-
-    bb = 1 ** 2
-    fm = (1 + bb) * (p * r) / (bb * p + K.epsilon() )
-    fm = tf.to_int64(fm)
-    return fm
-
-
-
-
-def dice_coef(y_true, y_pred):
-
-    labels = y_true
-    labels = tf.to_int64(labels)
-    labels = tf.one_hot(labels,2)
-    flat_labels= tf.reshape(labels, [-1, 2])
-    flat_logits = tf.reshape(y_pred, (-1, 2))
-    intersection = tf.reduce_sum(flat_logits * flat_labels, 1, keep_dims=True)
-    union = tf.reduce_sum(tf.mul(flat_logits, flat_logits), 1, keep_dims=True) \
-                    + tf.reduce_sum(tf.mul(flat_labels, flat_labels), keep_dims=True)
-    return 2 * intersection/ (union)
-
-
-def dice_coef_loss(y_true, y_pred):
-    return 1.-dice_coef(y_true, y_pred)
-
-def sigmoid_cross_weighted(y_true,y_pred):
-    y_p = tf.to_int64(y_true)
-    y_p = tf.reshape(y_pred, (-1, 2))
-    y_t = tf.to_int64(y_true)
-    y_t = K.flatten(y_t)
-    y_t = tf.one_hot(y_t,2)
-    cross_entropy =  tf.nn.weighted_cross_entropy_with_logits(y_p, y_t, 0.001, name=None)
-    return tf.reduce_mean(cross_entropy, name = 'class_cross_entropy')
-
-
-
+#loss function
 def weighted_softmax(y_true,y_pred):
     class_weight = tf.constant(np.array([1.0, 100], dtype='f'))
 
@@ -273,7 +181,7 @@ def get_unet():
 
     #model.load_weights(os.getcwd()+'/u2.hdf5')
 
-    model.compile(optimizer=Adam(lr=10e-5,decay=0.001), loss = weighted_softmax, metrics=[acc1,prec1,rec1,fm1])
+    model.compile(optimizer=Adam(lr=10e-5,decay=0.001), loss = weighted_softmax, metrics=["accuracy",prec1,rec1,fm1])
 
     #model.compile(optimizer=Adam(lr=10e-5), loss="binary_crossentropy", metrics=["accuracy","precision", "recall", "fscore"])
 
@@ -323,7 +231,7 @@ class Histories(Callback):
         self.prec = []
         self.recall =[]
         self.fscore =[]
-        self.dice = []
+        
     def on_train_end(self, logs={}):
         return
  
@@ -334,12 +242,11 @@ class Histories(Callback):
         self.val_losses.append(logs.get('val_loss'))
         self.val_accs.append(logs.get('val_acc'))
         self.losses.append(logs.get('loss'))
-
-        self.accs.append(logs.get('acc'))
-        self.prec.append(logs.get('prec'))
-        self.recall.append(logs.get('rec'))
-        #self.recall.append(logs.get('fm'))
-
+        self.accs.append(logs.get('accuracy'))
+        self.prec.append(logs.get('prec1'))
+        self.recall.append(logs.get('rec1'))
+        self.fscore.append(logs.get('frec1'))
+        print('/n')
         return
 
  
@@ -367,7 +274,7 @@ def train(imgs_train,gt_train,model):
     model.save('backend_model.h5')
     model.save_weights('backend_model_weights.h5')
     print( history)
-    #plt_history(history)
+    plt_history(history)
     np.savetxt('model_history.txt', np.array(history).reshape(1,),  delimiter=" ", fmt="%s")
 
     print('-'*30)
@@ -458,4 +365,3 @@ if __name__ == '__main__':
     main()
     ##for testing
     #maintest()
-
