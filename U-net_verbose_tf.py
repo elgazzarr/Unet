@@ -7,30 +7,28 @@ from keras.metrics import fscore,fmeasure,recall,fbeta_score,binary_accuracy,pre
 from keras.models import Model
 from keras.layers import Input, merge, Convolution2D, MaxPooling2D, UpSampling2D, Dropout
 from keras.optimizers import Adam, SGD
-from keras.callbacks import ModelCheckpoint, LearningRateScheduler, Callback
+from keras.callbacks import ModelCheckpoint, LearningRateScheduler, Callback, EarlyStopping, CSVLogger
 from keras import backend as K
 import tensorflow as tf
-import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import csv
-from keras.utils.np_utils import to_categorical
-import math
+
 import pandas
 
 def load_traindata():
     path = os.getcwd()
-    x = np.load(path + "/data/imgs_train_256_40_T1.npy")
+    x = np.load(path + "/data/imgs_train_256_40_FLAIR.npy")
     y = np.load(path + "/data/gt_train_256_40.npy")
     print (x.shape)
     print (y.shape)
     #imgs_train = imgs_train.astype('float32')
     #imgs_mask_train = imgs_mask_train.astype('float32')
-    return  x, y
+    return x,y
 
 
 def load_testdata():
     path = os.getcwd()
-    x = np.load(path + "/data/imgs_train_256_40_T1.npy")
+    x = np.load(path + "/data/imgs_train_256_40_FLAIR.npy")
     y = np.load(path + "/data/gt_train_256_40.npy")
     print (x.shape)
     print (y.shape)
@@ -38,44 +36,69 @@ def load_testdata():
     #imgs_mask_train = imgs_mask_train.astype('float32')
     return  x, y
 
-
+def process_data(x,y):
+     x/=255.
+     mean = x.mean()# (0)[np.newaxis,:]  # mean for data centering
+     std = np.std(x)  # std for data normalization
+     x -= mean
+     x /= std
+     y /= 255.
+     return x,y
 
 #Evaluation metrics
-def prec1(y_true, y_pred):
-    labels = K.flatten(y_true)
-    labels = tf.to_int64(labels)
-    labels = tf.one_hot(labels,2)
+
+def acc(y_true, y_pred):
+
+    labels = tf.to_int64(y_true)
+    labels = K.flatten(labels)
     logits = tf.reshape(y_pred, (-1, 2))
+
+    predicted_annots = K.flatten(tf.argmax(logits, 1))
+    correct_predictions = tf.equal(predicted_annots, labels)
+    segmentation_accuracy = tf.reduce_mean(tf.cast(correct_predictions, tf.float32))
+    return segmentation_accuracy
+
+def prec(y_true, y_pred):
+
+    labels = tf.to_int64(y_true)
+    labels = K.flatten(labels)
+    logits = tf.reshape(y_pred, (-1, 2))
+    logits = K.flatten(tf.argmax(logits, 1))
+    labels = tf.to_float(labels)
+    logits = tf.to_float(logits)
 
     return precision(labels,logits)
 
 
 
-def rec1(y_true, y_pred):
-    labels = K.flatten(y_true)
-    labels = tf.to_int64(labels)
-    labels = tf.one_hot(labels,2)
-    logits = tf.reshape(y_pred, (-1, 2))
+def rec(y_true, y_pred):
 
+    labels = tf.to_int64(y_true)
+    labels = K.flatten(labels)
+    logits = tf.reshape(y_pred, (-1, 2))
+    logits = K.flatten(tf.argmax(logits, 1))
+    labels = tf.to_float(labels)
+    logits = tf.to_float(logits)
 
     return  recall(labels,logits)
 
 
-def fm1(y_true, y_pred):
-    labels = K.flatten(y_true)
-    labels = tf.to_int64(labels)
-    labels = tf.one_hot(labels,2)
+def fm(y_true, y_pred):
+    labels = tf.to_int64(y_true)
+    labels = K.flatten(labels)
     logits = tf.reshape(y_pred, (-1, 2))
+    logits = K.flatten(tf.argmax(logits, 1))
+    labels = tf.to_float(labels)
+    logits = tf.to_float(logits)
 
     return fmeasure(labels,logits)
 
 #loss function
 def weighted_softmax(y_true,y_pred):
-    class_weight = tf.constant(np.array([1.0, 100], dtype='f'))
 
-
-    labels = K.flatten(y_true)
-    labels = tf.to_int64(labels)
+    class_weight = tf.constant(np.array([0.3,0.7], dtype='f'))
+    #label = K.flatten(y_true)
+    labels = tf.to_int64(y_true)
     labels = tf.one_hot(labels,2)
     labels = tf.reshape(labels, [-1, 2])
     logits = tf.reshape(y_pred, (-1, 2))
@@ -85,11 +108,13 @@ def weighted_softmax(y_true,y_pred):
     weight_map = tf.reduce_sum(weight_map, 1)
 
     loss_map = tf.nn.softmax_cross_entropy_with_logits(logits, labels)
+
     weighted_loss = tf.mul(loss_map, weight_map)
 
     loss = tf.reduce_mean(weighted_loss)
 
-    return loss
+
+    return loss*4
 
 
 
@@ -181,7 +206,7 @@ def get_unet():
 
     #model.load_weights(os.getcwd()+'/u2.hdf5')
 
-    model.compile(optimizer=Adam(lr=10e-5,decay=0.001), loss = weighted_softmax, metrics=["accuracy",prec1,rec1,fm1])
+    model.compile(optimizer=Adam(lr=10e-5,decay=0.001), loss = weighted_softmax, metrics=[acc,prec,rec,fm])
 
     #model.compile(optimizer=Adam(lr=10e-5), loss="binary_crossentropy", metrics=["accuracy","precision", "recall", "fscore"])
 
@@ -242,10 +267,10 @@ class Histories(Callback):
         self.val_losses.append(logs.get('val_loss'))
         self.val_accs.append(logs.get('val_acc'))
         self.losses.append(logs.get('loss'))
-        self.accs.append(logs.get('accuracy'))
-        self.prec.append(logs.get('prec1'))
-        self.recall.append(logs.get('rec1'))
-        self.fscore.append(logs.get('frec1'))
+        self.accs.append(logs.get('acc'))
+        self.prec.append(logs.get('prec'))
+        self.recall.append(logs.get('rec'))
+        self.fscore.append(logs.get('fm'))
         print('/n')
         return
 
@@ -253,6 +278,10 @@ class Histories(Callback):
 
         
 def train(imgs_train,gt_train,model):
+    mod = "FLAIR"
+    version = "v0"
+    mod = mod + version
+
 
     # print(np.histogram(imgs_train))
     # print(np.histogram(imgs_mask_train))
@@ -260,22 +289,23 @@ def train(imgs_train,gt_train,model):
     print('-'*30)
     print('Creating and compiling model...')
     print('-'*30)
-
-    model_checkpoint = ModelCheckpoint('unet.hdf5', monitor='loss',verbose=1, save_best_only=True)
-
+    c = CSVLogger(mod+'.log',separator=',')
+    model_checkpoint = ModelCheckpoint((mod+'.hdf5'), monitor='loss',verbose=1, save_best_only=True)
+    earlystopping = EarlyStopping(monitor = "val_loss",patience=3)	
     print('-'*30)
     print('Fitting model...')
     print('-'*30)
 
-    pandas.DataFrame( model.fit(imgs_train, gt_train, batch_size=2, nb_epoch=100, verbose=1, shuffle=True,callbacks=[model_checkpoint, history], validation_split=0.2).history).to_csv("history.csv")
-
+    pandas.DataFrame( model.fit(imgs_train, gt_train, batch_size=8, nb_epoch=50, verbose=1, shuffle=True,callbacks=[model_checkpoint, history,earlystopping,c], validation_split=0.2).history).to_csv(mod + "_history.csv")
+    #h = model.fit(imgs_train, gt_train, batch_size=4, nb_epoch = 30 ,verbose=1, shuffle= False ,callbacks=[model_checkpoint,history,earlystopping,c] ,validation_split=0.2)
     print('-'*30)
     print('saving weights and model as .h5')
-    model.save('backend_model.h5')
-    model.save_weights('backend_model_weights.h5')
-    print( history)
-    plt_history(history)
-    np.savetxt('model_history.txt', np.array(history).reshape(1,),  delimiter=" ", fmt="%s")
+    model.save(mod + '.h5')
+    model.save_weights(mod +'_weights.h5')
+   #plt_history(history)
+   #np.savetxt('FLAIRmodel_history.txt', np.array(history).reshape(1,),  delimiter=" ", fmt="%s")
+   	
+	
 
     print('-'*30)
 
@@ -332,27 +362,33 @@ def maintest():
     print('-'*30)
     print('Loading and preprocessing test data...')
     print('-'*30)
-    x,y = load_testdata()
+    x,y = load_traindata()
 
-    slice = 0
-
+    slice = 17
     ns= slice+1
     img = x[slice:ns,:,:,:]
     label = y[slice,:,:,0]
+
     print("img shape: ", img.shape)
 
     model = get_unet()
-    model.load_weights(os.getcwd()+"/Models/Model1/backend_model_weights_70epochs.h5")
+    model.load_weights(os.getcwd()+"/FLAIRv2_weights.h5")
     model.compile(optimizer=Adam(lr=10e-5,decay=0.001), loss = weighted_softmax, metrics=["accuracy"])
     logits = model.predict(img)
     logits = logits[0,:,:,:]
 
     print ("Logits:", logits)
-    logits = np.argmax(logits, axis=2)
-    print (logits.shape)
+    logits = np.argmax(logits, 2)
     visualize(img[0,:,:,0],label,logits)
 
 
+    #
+    # labels = tf.reshape(label, [-1, 1])
+    # predicted_annots = tf.reshape(logits, [-1, 1])
+    # correct_predictions = tf.equal(predicted_annots, labels)
+    # segmentation_accuracy = tf.reduce_mean(tf.cast(correct_predictions, tf.float32))
+    #
+    # print ("Segmentation accuracy: ", segmentation_accuracy.eval())
 
 
 
@@ -362,6 +398,7 @@ def maintest():
 
 
 if __name__ == '__main__':
-    main()
+        main()
     ##for testing
-    #maintest()
+        #maintest()
+
